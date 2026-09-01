@@ -1,127 +1,185 @@
-"""Interactive Capy chat entry point backed by the local database."""
+"""
+Capy Example - Interactive Chat with Memory.
 
-from __future__ import annotations
+This example demonstrates how to use CapyMemory to build a chatbot that
+remembers useful facts from conversations.
+"""
 
-from collections.abc import Iterable
-
-from sqlalchemy.orm import Session
-
-from capy.core.openai import get_llm_client
+from capy.core.openai import get_openai_client
 from capy.core.settings import get_settings
 from capy.db.database import SessionLocal, create_table
 from capy.db.models.conversation import Conversation
-from capy.db.models.memory import Memory
-from capy.db.models.message import Message
 from capy.db.models.profile import Profile
-
-CAPY_SYSTEM_PROMPT = """You are Capy, a warm and thoughtful companion.
-Be concise, honest, and helpful. Do not claim to remember information unless it
-is present in the conversation context. Treat the user with patience and respect."""
+from capy.memory.memory import CapyMemory
 
 
-def get_or_create_profile(session: Session, name: str) -> Profile:
-    """Return the named profile used to keep the local conversation persistent."""
-    profile = session.query(Profile).filter(Profile.name == name).first()
-    if profile is None:
-        profile = Profile(name=name)
-        session.add(profile)
-        session.commit()
-    return profile
+PROFILE_NAME = "Shashank"
 
 
-def get_or_create_conversation(session: Session, profile: Profile) -> Conversation:
-    """Return the most recently used conversation for the profile."""
-    conversation = (
-        session.query(Conversation)
-        .filter(Conversation.profile_id == profile.id)
-        .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
-        .first()
-    )
-    if conversation is None:
-        conversation = Conversation(profile_id=profile.id)
-        session.add(conversation)
-        session.commit()
-    return conversation
-
-
-def build_messages(conversation: Conversation, user_message: str) -> list[dict[str, str]]:
-    """Build a short provider request from Capy's persona and recent messages."""
-    recent_messages: Iterable[Message] = conversation.messages[-8:]
-    messages = [{"role": "system", "content": CAPY_SYSTEM_PROMPT}]
-    messages.extend(
-        {"role": message.role, "content": message.content} for message in recent_messages
-    )
-    messages.append({"role": "user", "content": user_message})
-    return messages
-
-
-def chat_with_capy(session: Session, conversation: Conversation, user_message: str) -> str:
-    """Generate and persist one Capy response."""
+def chat_with_memory(
+    user_message: str,
+    memory: CapyMemory,
+    conversation_id: int,
+) -> str:
+    """
+    Generate a response using memories from the current profile.
+    """
     settings = get_settings()
-    client = get_llm_client()
+    client = get_openai_client()
+
+    # Search for relevant memories.
+    relevant_memories = memory.search(
+        query=user_message,
+        conversation_id=conversation_id,
+        limit=5,
+    )
+
+    # Format memories for the prompt.
+    memories_text = "\n".join(
+        f"- {item['memory']}" for item in relevant_memories["results"]
+    ) or "No memories yet."
+
+    # Generate a response with memory context.
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are Capy, a warm, thoughtful, patient, and honest companion.\n"
+                "Be concise, kind, and helpful. Use the user's memories to "
+                "personalize your responses when relevant, but do not mention "
+                "internal memory systems unless the user asks. Never claim to "
+                "remember anything that is not present in the conversation or "
+                "supplied memory context. Treat the user with patience and "
+                "respect.\n\n"
+                f"User Memories:\n{memories_text}"
+            ),
+        },
+        {"role": "user", "content": user_message},
+    ]
+
     response = client.chat.completions.create(
         model=settings.llm_model,
-        messages=build_messages(conversation, user_message),
+        messages=messages,
     )
-    assistant_message = response.choices[0].message.content if response.choices else None
-    if not assistant_message:
-        raise RuntimeError("General Compute returned an empty response.")
 
-    user_record = Message(
-        conversation_id=conversation.id,
-        role="user",
-        content=user_message,
+    assistant_message = (
+        response.choices[0].message.content if response.choices else None
     )
-    assistant_record = Message(
-        conversation_id=conversation.id,
-        role="assistant",
-        content=assistant_message,
+    if not assistant_message:
+        raise RuntimeError("The configured LLM returned an empty response.")
+
+    # Store this conversation in memory.
+    memory.add(
+        messages=[
+            {"role": "user", "content": user_message},
+            {"role": "assistant", "content": assistant_message},
+        ],
+        conversation_id=conversation_id,
     )
-    session.add_all([user_record, assistant_record])
-    session.commit()
+
     return assistant_message
 
 
-def show_memories(session: Session, profile: Profile) -> None:
-    """Print currently active profile memories without exposing inactive history."""
-    memories = (
-        session.query(Memory)
-        .filter(Memory.profile_id == profile.id, Memory.is_active.is_(True))
-        .order_by(Memory.updated_at.desc())
-        .all()
-    )
-    print("\n--- Active Capy memories ---")
-    if not memories:
-        print("  No active memories stored yet.")
-    for memory in memories:
-        print(f"  [{memory.id}] {memory.memory_text}")
-    print("-" * 28)
-
-
 def main() -> None:
-    """Run the interactive Capy chat loop."""
+    """
+    Main entry point - interactive Capy chat loop.
+    """
     print("=" * 50)
-    print("Capy Chat")
+    print("Capy Chat Demo")
     print("=" * 50)
-    print("Type 'exit' to quit or 'memories' to list active memories.")
+    print()
 
+    # Step 1: Configure through environment variables or configure().
+    # configure(general_compute_api_key="...")
+
+    # Step 2: Create database tables.
     create_table()
-    session = SessionLocal()
+
+    # Step 3: Create a session, profile, and memory instance.
+    db = SessionLocal()
+
     try:
-        profile = get_or_create_profile(session, "default")
-        conversation = get_or_create_conversation(session, profile)
+        profile = db.query(Profile).filter(Profile.name == PROFILE_NAME).first()
+        if profile is None:
+            profile = Profile(name=PROFILE_NAME)
+            db.add(profile)
+            db.commit()
+
+        conversation_input = input(
+            "Enter conversation ID (or press Enter for new): "
+        ).strip()
+
+        if conversation_input and conversation_input.isdigit():
+            conversation_id = int(conversation_input)
+            conversation = (
+                db.query(Conversation)
+                .filter(
+                    Conversation.id == conversation_id,
+                    Conversation.profile_id == profile.id,
+                )
+                .first()
+            )
+
+            if conversation:
+                print(f"Resuming conversation: {conversation_id}")
+            else:
+                existing_conversation = db.get(Conversation, conversation_id)
+                if existing_conversation:
+                    raise ValueError(
+                        f"Conversation {conversation_id} belongs to another profile."
+                    )
+
+                conversation = Conversation(
+                    id=conversation_id,
+                    profile_id=profile.id,
+                )
+                db.add(conversation)
+                db.commit()
+                print(f"Created new conversation: {conversation_id}")
+        else:
+            conversation = Conversation(profile_id=profile.id)
+            db.add(conversation)
+            db.commit()
+            conversation_id = conversation.id
+            print(f"Created new conversation: {conversation_id}")
+
+        memory = CapyMemory(db)
+
+        print()
+        print("Chat started! Type 'exit' to quit, 'memories' to see stored memories.")
+        print("-" * 50)
+
+        # Chat loop.
         while True:
             user_input = input("\nYou: ").strip()
+
             if not user_input:
                 continue
+
             if user_input.lower() in {"exit", "quit"}:
+                print("Goodbye!")
                 break
+
             if user_input.lower() == "memories":
-                show_memories(session, profile)
+                # Show relevant active memories for this conversation.
+                results = memory.search(
+                    query="What do you remember about me?",
+                    conversation_id=conversation_id,
+                    limit=20,
+                )
+                print("\n--- Stored Capy Memories ---")
+                for item in results["results"]:
+                    print(f"  [{item['memory_id']}] {item['memory']}")
+                if not results["results"]:
+                    print("  No memories stored yet.")
+                print("-" * 25)
                 continue
-            print(f"\nCapy: {chat_with_capy(session, conversation, user_input)}")
+
+            # Get and persist Capy's response.
+            response = chat_with_memory(user_input, memory, conversation_id)
+            print(f"\nCapy: {response}")
     finally:
-        session.close()
+        db.close()
 
 
 if __name__ == "__main__":
