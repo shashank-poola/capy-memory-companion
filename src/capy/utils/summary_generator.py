@@ -1,0 +1,110 @@
+from datetime import datetime, timezone
+from typing import List
+
+from sqlalchemy.orm import Session
+
+from capy.core.openai import get_llm_client
+from capy.core.settings import get_settings
+from capy.db.models.conversation_summary import ConversationSummary
+from capy.db.models.message import Message
+from capy.prompts.summary_system_prompt import SUMMARY_GENERATOR_PROMPT
+
+
+# Config
+MAX_MESSAGES_FROM_SUMMARY = 200
+SUMMARY_TRIGGER_COUNT = 20
+
+
+def generate_summary_prompt(messages: List[str]) -> List[dict]:
+    """
+    Build the prompt sent to the LLM.
+    """
+    conversation_text = "\n".join(messages)
+
+    return [
+        {"role": "system", "content": SUMMARY_GENERATOR_PROMPT},
+        {
+            "role": "user",
+            "content": f"""
+Summarize the following conversation.
+
+Conversation:
+{conversation_text}
+
+Return only the summary text.
+""",
+        },
+    ]
+
+
+# Core Function
+def generate_conversation_summary(db: Session, conversation_id: int) -> str:
+    """
+    Generate and store a summary for a conversation.
+    """
+    settings = get_settings()
+    llm_client = get_llm_client()
+
+    # Total count of messages in the database.
+    total_count = (
+        db.query(Message)
+        .filter(Message.conversation_id == conversation_id)
+        .count()
+    )
+
+    # Trigger condition.
+    if total_count == 0 or total_count % SUMMARY_TRIGGER_COUNT != 0:
+        return ""
+
+    # Fetch all past messages, oldest first.
+    messages = (
+        db.query(Message)
+        .filter(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at.asc())
+        .limit(MAX_MESSAGES_FROM_SUMMARY)
+        .all()
+    )
+
+    if not messages:
+        return ""
+
+    # Format messages for the LLM call.
+    formatted_messages = [
+        f"{message.role.upper()}: {message.content}"
+        for message in messages
+    ]
+
+    # Call the LLM.
+    prompt = generate_summary_prompt(formatted_messages)
+    response = llm_client.chat.completions.create(
+        model=settings.llm_model,
+        messages=prompt,
+        temperature=0.2,
+    )
+
+    response_text = response.choices[0].message.content if response.choices else None
+    summary_text = (response_text or "").strip()
+    if not summary_text:
+        return ""
+
+    existing_summary = (
+        db.query(ConversationSummary)
+        .filter(ConversationSummary.conversation_id == conversation_id)
+        .one_or_none()
+    )
+
+    if existing_summary:
+        existing_summary.summary_text = summary_text
+        existing_summary.updated_at = datetime.now(timezone.utc)
+    else:
+        db.add(
+            ConversationSummary(
+                conversation_id=conversation_id,
+                summary_text=summary_text,
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+
+    db.commit()
+
+    return summary_text

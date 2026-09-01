@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -15,12 +13,6 @@ _engine = None
 _SessionLocal = None
 
 Base = declarative_base()
-
-
-def utcnow() -> datetime:
-    """Return a UTC timestamp suitable for the SQLite datetime columns."""
-    return datetime.now(UTC).replace(tzinfo=None)
-
 
 def get_engine():
     """
@@ -89,7 +81,13 @@ def create_table():
     Safe to call multiple times (idempotent).
     """
     try:
-        import capy.db.models  # noqa: F401
+        from capy.db.models import (
+            conversation,
+            conversation_summary,
+            memory,
+            message,
+            profile,
+        )  # noqa: F401
 
         Base.metadata.create_all(bind=get_engine())
         print("Tables created successfully")
