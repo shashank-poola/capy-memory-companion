@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Dict, List, Optional
-
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON as JSONType
 from sqlalchemy import String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -28,16 +27,8 @@ class Memory(Base):
     __tablename__ = "memories"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    profile_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("profiles.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    conversation_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("conversations.id", ondelete="CASCADE"),
-        nullable=False,
-    )
+    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey("profiles.id", ondelete="CASCADE"), nullable=False)
+    conversation_id: Mapped[int] = mapped_column(Integer, ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
     memory_text: Mapped[str] = mapped_column(Text, nullable=False)
     category: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     embedding: Mapped[List[float]] = mapped_column(JSONType, nullable=True)
@@ -47,11 +38,7 @@ class Memory(Base):
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
     )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-        onupdate=text("CURRENT_TIMESTAMP"),
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"), onupdate=text("CURRENT_TIMESTAMP"),
     )
 
     # New additions

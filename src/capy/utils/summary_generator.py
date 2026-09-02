@@ -1,10 +1,10 @@
 from datetime import datetime, timezone
 from typing import List
-
 from sqlalchemy.orm import Session
 
 from capy.core.openai import get_llm_client
 from capy.core.settings import get_settings
+
 from capy.db.models.conversation_summary import ConversationSummary
 from capy.db.models.message import Message
 from capy.prompts.summary_system_prompt import SUMMARY_GENERATOR_PROMPT
