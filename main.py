@@ -31,7 +31,7 @@ def chat_with_memory(
     relevant_memories = memory.search(
         query=user_message,
         conversation_id=conversation_id,
-        limit=5,
+        limit=10,
     )
 
     # Format memories for the prompt.

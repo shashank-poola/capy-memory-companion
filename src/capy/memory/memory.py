@@ -83,11 +83,22 @@ class CapyMemory:
         # Generate query embedding
         query_embedding = embed_text(query)
 
-        # Get FAISS index
+        # Get the FAISS index.
         vector_store = get_vector_store(conversation_id)
 
-        # Rebuild if empty
-        if vector_store.count == 0:
+        # Rebuild when the persisted index is empty or stale. A non-empty but
+        # incomplete index would otherwise make active database memories
+        # impossible to retrieve.
+        active_memory_ids = {
+            memory_id
+            for (memory_id,) in self.db.query(Memory.id).filter(
+                Memory.conversation_id == conversation_id,
+                Memory.is_active.is_(True),
+                Memory.embedding.isnot(None),
+            ).all()
+        }
+        indexed_memory_ids = set(vector_store.id_map)
+        if indexed_memory_ids != active_memory_ids:
             vector_store = rebuild_index_from_db(self.db, conversation_id)
 
         # FAISS search (O(log n))

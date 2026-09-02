@@ -52,6 +52,13 @@ class CapySettings:
         and stores the database in ``data/capy_memory.db``.
         """
         if self.database_url:
+            if self.database_url.startswith("sqlite:///"):
+                database_path = self.database_url[len("sqlite:///"):].split("?", 1)[0]
+                if database_path and database_path != ":memory:":
+                    database_dir = os.path.dirname(
+                        os.path.abspath(os.path.expanduser(database_path))
+                    )
+                    os.makedirs(database_dir, exist_ok=True)
             return self.database_url
 
         db_dir = os.path.join(os.getcwd(), "data")

@@ -19,3 +19,15 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "src"]
+markers = [
+    "live: tests that call external LLM or embedding services",
+]
