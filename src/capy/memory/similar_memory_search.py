@@ -20,7 +20,7 @@ def search_similar_memories(
     """
     Find memories similar to the query embedding.
 
-    Uses FAISS for O(log n) search instead of O(n) brute force.
+    Uses the conversation's FAISS index for vector similarity search.
 
     Args:
         db: Database session
@@ -38,7 +38,7 @@ def search_similar_memories(
     if vector_store.count == 0:
         vector_store = rebuild_index_from_db(db, conversation_id)
 
-    # Search FAISS (O(log n))
+    # Search the exact FAISS index.
     results = vector_store.search(query_embeddings, k=limit)
 
     if not results:

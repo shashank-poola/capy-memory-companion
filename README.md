@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  Capy combines an chat model, local embeddings, SQLite, and FAISS so a conversation can feel personal without treating every message as permanent truth.
+  Capy combines an OpenAI-compatible chat model, local embeddings, SQLite, and FAISS so a conversation can feel personal without treating every message as permanent truth.
 </p>
 
 ---
@@ -76,7 +76,9 @@ For the complete component design, data flow, search behavior, and operational n
 │   ├── prompts/                # Extraction, update, and summary instructions
 │   └── utils/                  # Conversation summary generation
 ├── tests/                      # Offline and live pytest coverage
+├── evals/                      # Offline-first companion-memory evaluation fixtures
 ├── DESIGN.md                   # High-level architecture and design decisions
+├── EVALUATION.md               # Recorded evaluation scope and results
 ├── pyproject.toml              # Package metadata and test configuration
 └── uv.lock                     # Locked dependency graph
 ```
@@ -152,7 +154,7 @@ For semantic facts, Capy asks a memory-management model to choose one of five ac
 | `DELETE` | Soft-deactivate a memory. |
 | `NOOP` | Keep the existing record unchanged. |
 
-Memory retrieval is scoped to the selected conversation. Capy embeds the latest user message, searches the active FAISS index, and supplies up to ten relevant results to the chat model.
+Memory retrieval is scoped to the selected conversation. Capy embeds the latest user message, searches the active FAISS index, and supplies up to ten relevant results to the chat model. The response prompt also includes a bounded recent-message window and the stored conversation summary when available, so continuity does not depend on an unbounded transcript.
 
 ## Testing
 
@@ -171,6 +173,21 @@ Remove-Item Env:CAPY_RUN_LIVE_E2E
 ```
 
 Live tests require `GENERAL_COMPUTE_API_KEY` and consume provider credits. They verify the configured chat provider, `gpt-oss-120b`, local embeddings, the interactive flow, and database persistence against real services.
+
+The optional offline evaluation harness can be run without credentials or network access:
+
+```powershell
+uv run python evals/run_evals.py
+```
+
+The latest run covered six scenarios and passed `45/45` checks (`pass_rate=1.000`). It includes a 51-turn fixture, but it uses deterministic mock extraction, retrieval, and response-policy components. It is evidence for memory-policy contracts, not a claim that a live LLM produced 51 consistent responses. See [EVALUATION.md](./EVALUATION.md) and [evals/README.md](./evals/README.md).
+
+## What we considered and did not pursue
+
+- **Full-memory prompting:** We did not dump every stored record into every request. Retrieval plus a bounded recent window keeps prompts focused and controls context growth.
+- **Remote embeddings by default:** OpenRouter embeddings remain an option, but local `all-MiniLM-L6-v2` embeddings avoid an additional provider dependency and embedding charge during normal development.
+- **A UI and service layer:** The assignment prioritizes the core memory loop, so the prototype remains a readable CLI instead of adding authentication, frontend state, or production infrastructure.
+- **Automatic deletion during decay:** Episodic decay changes ranking rather than silently erasing history. Retention and hard-erasure policy require an explicit product decision.
 
 ## Privacy and local data
 
@@ -191,10 +208,11 @@ These files are intentionally ignored by Git. Treat them as local user data. The
 Capy is built as a clear, inspectable memory pipeline for a CLI companion. Current limitations are deliberate areas for future work:
 
 - memory retrieval is conversation-scoped even though records are associated with a profile;
-- the response prompt uses the current message and retrieved memories, rather than full recent chat history;
+- the response prompt uses a bounded recent-message window and summary rather than the full unbounded transcript;
 - the `memories` command is a broad semantic lookup, not a raw database administration view;
+- duplicate consolidation is conservative: recent highly similar bubbles are merged, while semantic canonicalization remains LLM-directed;
 - there is no authentication, authorization, encryption-at-rest, or schema migration layer; and
-- long-running deployments should add stronger deduplication, retention, and operational controls.
+- the optional evaluation harness is deterministic and does not replace a live model-quality study.
 
 ## Contributing
 

@@ -123,6 +123,51 @@ def test_memory_add_search_and_soft_delete(
     assert vector_store.count == 1
 
 
+def test_recent_duplicate_bubble_is_consolidated(
+    db_session,
+    profile_conversation,
+    offline_settings,
+    monkeypatch,
+):
+    """Repeated wording for one recent event reuses the active bubble."""
+    vector_store = _patch_offline_pipeline(monkeypatch)
+    _, conversation = profile_conversation
+
+    first = bubble_module.create_bubbles(
+        db=db_session,
+        bubbles=[
+            {
+                "text": "User is debugging a JWT issue",
+                "importance": 0.7,
+            }
+        ],
+        conversation_id=conversation.id,
+    )[0]
+    second = bubble_module.create_bubbles(
+        db=db_session,
+        bubbles=[
+            {
+                "text": "User is debugging a JWT expiration issue in FastAPI",
+                "importance": 0.9,
+            }
+        ],
+        conversation_id=conversation.id,
+    )[0]
+
+    active_bubbles = db_session.query(Memory).filter_by(
+        conversation_id=conversation.id,
+        is_episodic=True,
+        is_active=True,
+    ).all()
+    assert second.id == first.id
+    assert len(active_bubbles) == 1
+    assert active_bubbles[0].memory_text == (
+        "User is debugging a JWT expiration issue in FastAPI"
+    )
+    assert active_bubbles[0].importance == 0.9
+    assert vector_store.count == 1
+
+
 def test_memory_search_rebuilds_incomplete_index(
     db_session,
     profile_conversation,
@@ -194,6 +239,46 @@ def test_memory_update_reindexes_text(db_session, profile_conversation, offline_
         limit=1,
     )
     assert search_results["results"][0]["memory_id"] == memory_record.id
+
+
+def test_update_phase_indexes_classifier_text(
+    db_session,
+    profile_conversation,
+    offline_settings,
+    monkeypatch,
+):
+    """LLM-normalized memory text receives an embedding for that exact text."""
+    vector_store = _patch_offline_pipeline(monkeypatch)
+    _, conversation = profile_conversation
+
+    def embed(text):
+        return [0.0, 1.0] if "professionally" in text else [1.0, 0.0]
+
+    monkeypatch.setattr(update_phase_module, "embed_text", embed)
+    monkeypatch.setattr(
+        update_phase_module,
+        "llm_tool_call",
+        lambda candidate_fact, similar_memories: ToolDecision(
+            action="ADD",
+            memory_id=None,
+            text="User uses Python professionally",
+        ),
+    )
+
+    update_phase_module.update_phase(
+        db=db_session,
+        candidate_facts=["User uses Python"],
+        conversation_id=conversation.id,
+    )
+    stored = db_session.query(Memory).filter_by(
+        conversation_id=conversation.id,
+        is_active=True,
+        is_episodic=False,
+    ).one()
+
+    assert stored.memory_text == "User uses Python professionally"
+    assert stored.embedding == [0.0, 1.0]
+    assert vector_store.search([0.0, 1.0], k=1)[0]["memory_id"] == stored.id
 
 
 def test_memory_replace_deactivates_old_record(

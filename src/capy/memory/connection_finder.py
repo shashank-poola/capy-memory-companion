@@ -16,12 +16,12 @@ def find_connections(db: Session, new_bubble: Memory, conversation_id: int) -> L
     Find the connection between the new bubble and existing memories using FAISS.
     Return list of connected memory IDs.
 
-    Uses FAISS for fast similarity search instead of O(n) loop.
+    Uses the conversation's FAISS index for similarity search.
     """
     if not new_bubble.embedding:
         return []
 
-    # Use FAISS to find similar memories (O(log n))
+    # Use FAISS to find similar memories.
     vector_store = get_vector_store(conversation_id)
 
     # Search for more than we need to filter by threshold

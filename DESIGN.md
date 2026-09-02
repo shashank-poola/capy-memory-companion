@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-Capy Memory is a companion that preserves useful conversational context without storing every sentence as a permanent fact. It combines an OpenAI-compatible language model with local embeddings, SQLite persistence, and FAISS retrieval.
+Capy Memory is a Python CLI companion that preserves useful conversational context without storing every sentence as a permanent fact. It combines an OpenAI-compatible language model with local embeddings, SQLite persistence, and FAISS retrieval.
 
 The central principle is simple: **store what the user explicitly says, retrieve only what is relevant, and let newer information replace outdated information.**
 
@@ -93,7 +93,11 @@ sequenceDiagram
     Index-->>Memory: Candidate IDs and scores
     Memory-->>CLI: Ranked active memories
 
-    CLI->>LLM: System prompt with memory context and current message
+    CLI->>Memory: get_conversation_context(conversation_id, limit=10)
+    Memory->>DB: Load summary and recent messages
+    DB-->>Memory: Bounded conversation context
+    Memory-->>CLI: Summary and recent messages
+    CLI->>LLM: System prompt with history, memory context, and current message
     LLM-->>CLI: Capy response
 
     CLI->>Memory: add(user and assistant pair)
@@ -120,7 +124,7 @@ sequenceDiagram
     end
 ```
 
-The response-generation path deliberately uses the current message plus retrieved memory context. Messages and summaries are persisted and are supplied to the extraction workflow as context; they are not currently injected directly into the main chat prompt.
+The response-generation path uses the current message, up to ten retrieved memories, a bounded recent-message window, and the stored conversation summary when one exists. This gives Capy short-term conversational continuity without sending an unbounded transcript. Prior assistant messages are treated as dialogue context rather than proof of a user fact.
 
 ## 6. Data model
 
@@ -214,11 +218,11 @@ For every semantic candidate, Capy finds similar active memories in the same con
 | `DELETE` | Marks the selected record inactive and removes its active FAISS mapping. |
 | `NOOP` | Leaves the current state unchanged. |
 
-This makes changes such as “I no longer like tea; I prefer coffee” representable without retaining the old preference as active context.
+This makes changes such as “I no longer like tea; I prefer coffee” representable without retaining the old preference as active context. Exact semantic restatements are skipped, classifier targets are checked against the current conversation, and classifier-normalized text is embedded using the exact text that is stored.
 
 ### 7.3 Episodic bubbles
 
-Bubbles are created with `is_episodic=True`, a current UTC `occurred_at` timestamp, and a model-provided importance score. After indexing a new bubble, Capy can connect it to related memories through metadata links.
+Bubbles are created with `is_episodic=True`, a current UTC `occurred_at` timestamp, and a model-provided importance score. After indexing a new bubble, Capy can connect it to related memories through metadata links. A very similar active bubble from the recent seven-day window is consolidated into the existing record, keeping the more descriptive wording and refreshing its recency/importance instead of creating an immediate duplicate.
 
 ### 7.4 Conversation summaries
 
@@ -291,10 +295,11 @@ The test suite is separated into safe and credit-consuming layers:
 
 | Test layer | Command | Coverage |
 | --- | --- | --- |
-| Offline | `uv run pytest tests -v -m "not live"` | Settings, schema registration, local embeddings, memory lifecycle, index rebuilding, summaries, and main flow. |
+| Offline | `uv run pytest tests -v -m "not live"` | Settings, schema registration, local embeddings, memory lifecycle, bubble consolidation, index rebuilding, summaries, bounded chat context, and main flow. |
 | Live | `CAPY_RUN_LIVE_E2E=1 uv run pytest tests -v` | General Compute requests, the configured model, local embeddings, and end-to-end chat-to-memory persistence. |
+| Contract evaluation | `uv run python evals/run_evals.py` | Six deterministic scenarios, including recall, replacement, unknown details, secret refusal, recency, and an exact 51-turn fixture. |
 
-Live tests are opt-in because they require a real `GENERAL_COMPUTE_API_KEY` and consume provider credits.
+Live tests are opt-in because they require a real `GENERAL_COMPUTE_API_KEY` and consume provider credits. The contract evaluation is offline and must not be presented as a live LLM quality score.
 
 ## 12. Security and privacy considerations
 
@@ -306,12 +311,12 @@ Live tests are opt-in because they require a real `GENERAL_COMPUTE_API_KEY` and 
 
 ## 13. Current scope and extension path
 
-Capy intentionally keeps the first version focused. The most valuable next improvements are:
+Capy intentionally keeps the first version focused. The remaining high-value improvements are:
 
-1. Use recent conversation messages and stored summaries directly in the chat-response prompt.
-2. Consolidate duplicate semantic facts and repeated episodic bubbles more aggressively.
-3. Make the `memories` command a complete active-record view rather than a semantic lookup.
-4. Expand retrieval from conversation scope to an explicit, profile-aware policy.
+1. Add a profile-wide retrieval policy when cross-conversation memory is explicitly desired.
+2. Make the `memories` command a complete active-record view rather than a semantic lookup.
+3. Add stronger semantic canonicalization for paraphrases while preserving legitimate independent events.
+4. Add a live, cost-labelled long-horizon model evaluation rather than relying only on deterministic contract fixtures.
 5. Add database migrations, index compaction, backups, and retention controls.
 6. Add authentication, authorization, encryption, and observability before any shared deployment.
 
@@ -325,5 +330,7 @@ Capy intentionally keeps the first version focused. The most valuable next impro
 | Semantic facts and episodic bubbles | Lets durable profile context coexist with time-sensitive reminders and blockers. |
 | Soft deletion for replacements | Prevents outdated memories from being retrieved while preserving lifecycle history. |
 | LLM-directed update actions | Handles natural-language contradictions and refinements without hard-coded domain rules. |
+| Conservative recent-bubble consolidation | Prevents repeated versions of one immediate event from overwhelming retrieval while preserving older, separate events. |
+| Bounded recent chat context | Improves continuity without putting an unbounded transcript into every provider request. |
 | ID-set index validation | Protects retrieval when persisted FAISS mappings drift from active SQLite records. |
-| Opt-in live tests | Keeps normal development deterministic and avoids accidental provider charges. |
+| Opt-in live tests and offline contract evaluation | Separates repeatable policy evidence from credit-consuming model behavior. |

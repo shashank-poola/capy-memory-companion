@@ -2,6 +2,7 @@
 Update Phase - Processes semantic facts using LLM-decided actions.
 """
 
+import re
 from typing import List
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
@@ -13,6 +14,37 @@ from capy.memory.similar_memory_search import search_similar_memories
 from capy.memory.tool_classifier import llm_tool_call
 from capy.memory.vector_store import get_vector_store, save_vector_store
 from capy.core.settings import get_settings
+
+
+def _normalise_text(text: str) -> str:
+    """Normalize fact text for a conservative exact-duplicate check."""
+    return " ".join(re.findall(r"\\w+", text.casefold()))
+
+
+def _valid_target(
+    db: Session,
+    memory_id: int | None,
+    conversation_id: int,
+) -> Memory | None:
+    """Return an active target owned by the current conversation only."""
+    if not memory_id:
+        return None
+
+    memory = db.get(Memory, memory_id)
+    if (
+        memory is None
+        or not memory.is_active
+        or memory.conversation_id != conversation_id
+    ):
+        return None
+    return memory
+
+
+def _decision_text(decision_text: str | None, fact: str) -> str:
+    """Choose non-empty classifier text without accepting non-string values."""
+    if isinstance(decision_text, str) and decision_text.strip():
+        return decision_text.strip()
+    return fact.strip()
 
 
 def update_phase(db: Session, candidate_facts: List[str], conversation_id: int):
@@ -29,6 +61,9 @@ def update_phase(db: Session, candidate_facts: List[str], conversation_id: int):
     vector_store = get_vector_store(conversation_id)
 
     for fact in candidate_facts:
+        fact = fact.strip()
+        if not fact:
+            continue
 
         # Embed candidate facts
         fact_embedding = embed_text(fact)
@@ -46,6 +81,16 @@ def update_phase(db: Session, candidate_facts: List[str], conversation_id: int):
             for m in similar_memories[:3]:
                 print(f"  - ID {m.id}: {m.memory_text[:50]}...")
 
+        # Avoid spending another provider call on an exact restatement.
+        normalized_fact = _normalise_text(fact)
+        if normalized_fact and any(
+            _normalise_text(memory.memory_text) == normalized_fact
+            for memory in similar_memories
+        ):
+            if settings.debug:
+                print(f"[DEBUG] NOOP - exact fact already exists: {fact[:50]}...")
+            continue
+
         # LLM decides which action to take
         decision = llm_tool_call(
             candidate_fact=fact,
@@ -57,12 +102,17 @@ def update_phase(db: Session, candidate_facts: List[str], conversation_id: int):
 
         # Execute action
         if decision.action == "ADD":
-            text_to_store = decision.text or fact
+            text_to_store = _decision_text(decision.text, fact)
+            stored_embedding = (
+                fact_embedding
+                if text_to_store == fact
+                else embed_text(text_to_store)
+            )
             memory = Memory(
                 profile_id=profile_id,
                 conversation_id=conversation_id,
                 memory_text=text_to_store,
-                embedding=fact_embedding,
+                embedding=stored_embedding,
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc),
             )
@@ -70,55 +120,79 @@ def update_phase(db: Session, candidate_facts: List[str], conversation_id: int):
             db.flush()  # Get ID before adding to FAISS
 
             # Add to FAISS index
-            vector_store.add(memory.id, fact_embedding)
+            vector_store.add(memory.id, stored_embedding)
 
             if settings.debug:
                 print(f"[DEBUG] Added memory ID {memory.id}")
 
         elif decision.action == "UPDATE" and decision.memory_id:
-            memory = db.get(Memory, decision.memory_id)
-            if memory:
-                # Remove old from FAISS
-                vector_store.remove(memory.id)
-
-                memory.memory_text = decision.text or fact
-                memory.embedding = fact_embedding
-                memory.updated_at = datetime.now(timezone.utc)
-
-                # Add updated to FAISS
-                vector_store.add(memory.id, fact_embedding)
-
+            memory = _valid_target(db, decision.memory_id, conversation_id)
+            if memory is None:
                 if settings.debug:
-                    print(f"[DEBUG] Updated memory ID {memory.id}")
+                    print(f"[DEBUG] Ignored invalid UPDATE target: {decision.memory_id}")
+                continue
+
+            text_to_store = _decision_text(decision.text, fact)
+            stored_embedding = (
+                fact_embedding
+                if text_to_store == fact
+                else embed_text(text_to_store)
+            )
+
+            # Remove old from FAISS
+            vector_store.remove(memory.id)
+
+            memory.memory_text = text_to_store
+            memory.embedding = stored_embedding
+            memory.updated_at = datetime.now(timezone.utc)
+
+            # Add updated text and its matching vector.
+            vector_store.add(memory.id, stored_embedding)
+
+            if settings.debug:
+                print(f"[DEBUG] Updated memory ID {memory.id}")
 
         elif decision.action == "DELETE" and decision.memory_id:
-            memory = db.get(Memory, decision.memory_id)
-            if memory:
-                # Remove from FAISS and mark the memory inactive.
-                vector_store.remove(memory.id)
-                memory.is_active = False
-
+            memory = _valid_target(db, decision.memory_id, conversation_id)
+            if memory is None:
                 if settings.debug:
-                    print(f"[DEBUG] Deleted memory ID {decision.memory_id}")
+                    print(f"[DEBUG] Ignored invalid DELETE target: {decision.memory_id}")
+                continue
+
+            # Remove from FAISS and mark the memory inactive.
+            vector_store.remove(memory.id)
+            memory.is_active = False
+
+            if settings.debug:
+                print(f"[DEBUG] Deleted memory ID {decision.memory_id}")
 
         elif decision.action == "REPLACE" and decision.memory_id:
             # REPLACE = deactivate old contradictory memory + ADD new one
-            old_memory = db.get(Memory, decision.memory_id)
-            if old_memory:
-                # Remove old from FAISS and mark it inactive
-                vector_store.remove(old_memory.id)
-                old_memory.is_active = False
-
+            old_memory = _valid_target(db, decision.memory_id, conversation_id)
+            if old_memory is None:
                 if settings.debug:
-                    print(f"[DEBUG] Deleted contradictory memory ID {old_memory.id}")
+                    print(f"[DEBUG] Ignored invalid REPLACE target: {decision.memory_id}")
+                continue
 
-            # Add the new fact
-            text_to_store = decision.text or fact
+            # Remove old from FAISS and mark it inactive
+            vector_store.remove(old_memory.id)
+            old_memory.is_active = False
+
+            if settings.debug:
+                print(f"[DEBUG] Deleted contradictory memory ID {old_memory.id}")
+
+            # Add the new fact with an embedding for the exact stored text.
+            text_to_store = _decision_text(decision.text, fact)
+            stored_embedding = (
+                fact_embedding
+                if text_to_store == fact
+                else embed_text(text_to_store)
+            )
             new_memory = Memory(
                 profile_id=profile_id,
                 conversation_id=conversation_id,
                 memory_text=text_to_store,
-                embedding=fact_embedding,
+                embedding=stored_embedding,
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc),
             )
@@ -126,7 +200,7 @@ def update_phase(db: Session, candidate_facts: List[str], conversation_id: int):
             db.flush()
 
             # Add to FAISS index
-            vector_store.add(new_memory.id, fact_embedding)
+            vector_store.add(new_memory.id, stored_embedding)
 
             if settings.debug:
                 print(f"[DEBUG] Added replacement memory ID {new_memory.id}: {text_to_store[:50]}...")

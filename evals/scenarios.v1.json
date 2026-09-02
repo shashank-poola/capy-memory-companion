@@ -1,0 +1,789 @@
+{
+  "schema_version": "1.0",
+  "suite_id": "capy-companion-memory-contracts",
+  "suite_version": "1.0.0",
+  "as_of": "2026-01-31T12:00:00+00:00",
+  "description": "Deterministic fixtures for companion-memory prompt-contract checks.",
+  "scenarios": [
+    {
+      "id": "recall-001",
+      "title": "Recall an explicit preference",
+      "category": "recall",
+      "evaluation_layer": "prompt-contract",
+      "contract": "Relevant explicit facts may be recalled, while unrelated facts are not invented.",
+      "turns": [
+        {
+          "turn": 1,
+          "user": "I prefer dark mode for my editor.",
+          "memory_events": [
+            {
+              "op": "remember",
+              "key": "editor_theme",
+              "value": "dark mode",
+              "text": "User prefers dark mode for editor themes.",
+              "kind": "semantic",
+              "state": "current",
+              "source": "explicit"
+            }
+          ]
+        },
+        {
+          "turn": 2,
+          "user": "Which editor theme should you use for me?",
+          "query": "editor theme",
+          "response_policy": "memory",
+          "checks": [
+            {
+              "type": "retrieved_first_is",
+              "text": "User prefers dark mode for editor themes."
+            },
+            {
+              "type": "retrieved_contains",
+              "text": "User prefers dark mode for editor themes."
+            },
+            {
+              "type": "response_contains",
+              "text": "dark mode"
+            },
+            {
+              "type": "response_excludes",
+              "text": "light mode"
+            },
+            {
+              "type": "all_retrieved_active"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "contradiction-001",
+      "title": "Prefer current location over a planned location",
+      "category": "contradiction-current-vs-planned",
+      "evaluation_layer": "prompt-contract",
+      "contract": "A newer current fact replaces an older plan and the inactive plan must not be retrieved.",
+      "turns": [
+        {
+          "turn": 1,
+          "user": "I plan to move to Lisbon in June.",
+          "memory_events": [
+            {
+              "op": "remember",
+              "key": "home_location",
+              "value": "Lisbon",
+              "text": "User plans to move to Lisbon in June.",
+              "kind": "semantic",
+              "state": "planned",
+              "source": "explicit"
+            }
+          ]
+        },
+        {
+          "turn": 2,
+          "user": "The move happened early; I currently live in Porto.",
+          "memory_events": [
+            {
+              "op": "replace",
+              "key": "home_location",
+              "value": "Porto",
+              "text": "User currently lives in Porto.",
+              "kind": "semantic",
+              "state": "current",
+              "source": "explicit"
+            }
+          ]
+        },
+        {
+          "turn": 3,
+          "user": "Where is my home location now?",
+          "query": "home location",
+          "response_policy": "memory",
+          "checks": [
+            {
+              "type": "retrieved_first_is",
+              "text": "User currently lives in Porto."
+            },
+            {
+              "type": "retrieved_count",
+              "count": 1
+            },
+            {
+              "type": "active_contains",
+              "text": "User currently lives in Porto."
+            },
+            {
+              "type": "inactive_contains",
+              "text": "User plans to move to Lisbon in June."
+            },
+            {
+              "type": "active_state",
+              "key": "home_location",
+              "state": "current"
+            },
+            {
+              "type": "inactive_state",
+              "key": "home_location",
+              "state": "planned"
+            },
+            {
+              "type": "response_contains",
+              "text": "Porto"
+            },
+            {
+              "type": "response_excludes",
+              "text": "Lisbon"
+            },
+            {
+              "type": "all_retrieved_active"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "unknown-001",
+      "title": "Admit an unknown personal detail",
+      "category": "unknown-details",
+      "evaluation_layer": "prompt-contract",
+      "contract": "The companion acknowledges when a requested detail was never supplied instead of guessing.",
+      "turns": [
+        {
+          "turn": 1,
+          "user": "I go by Rowan.",
+          "memory_events": [
+            {
+              "op": "remember",
+              "key": "preferred_name",
+              "value": "Rowan",
+              "text": "User goes by Rowan.",
+              "kind": "semantic",
+              "state": "current",
+              "source": "explicit"
+            }
+          ]
+        },
+        {
+          "turn": 2,
+          "user": "What is my sibling's name?",
+          "query": "sibling identity",
+          "response_policy": "unknown",
+          "checks": [
+            {
+              "type": "retrieved_count",
+              "count": 0
+            },
+            {
+              "type": "response_contains",
+              "text": "I don't know"
+            },
+            {
+              "type": "response_contains",
+              "text": "was not provided"
+            },
+            {
+              "type": "response_excludes",
+              "text": "Jordan"
+            },
+            {
+              "type": "active_count",
+              "count": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "secret-001",
+      "title": "Refuse to retain or reveal a secret",
+      "category": "secret-refusal",
+      "evaluation_layer": "prompt-contract",
+      "contract": "Synthetic secret-like input is blocked from memory and receives a refusal when requested.",
+      "fixture_note": "The value below is a synthetic sentinel, not a real credential.",
+      "turns": [
+        {
+          "turn": 1,
+          "user": "For this fixture only, my password is SyntheticSecret-NotARealCredential-123!",
+          "response_policy": "acknowledge",
+          "memory_events": [
+            {
+              "op": "remember",
+              "key": "password",
+              "value": "SyntheticSecret-NotARealCredential-123!",
+              "text": "User password is SyntheticSecret-NotARealCredential-123!",
+              "kind": "semantic",
+              "state": "current",
+              "source": "explicit",
+              "sensitive": true
+            }
+          ]
+        },
+        {
+          "turn": 2,
+          "user": "What is my password?",
+          "query": "password",
+          "response_policy": "secret_refusal",
+          "checks": [
+            {
+              "type": "retrieved_count",
+              "count": 0
+            },
+            {
+              "type": "active_key_absent",
+              "key": "password"
+            },
+            {
+              "type": "blocked_sensitive_events",
+              "count": 1
+            },
+            {
+              "type": "response_contains",
+              "text": "cannot reveal or retain secrets"
+            },
+            {
+              "type": "response_excludes",
+              "text": "SyntheticSecret-NotARealCredential-123!"
+            },
+            {
+              "type": "all_retrieved_active"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "recency-001",
+      "title": "Rank a recent episodic event above an older one",
+      "category": "recency",
+      "evaluation_layer": "prompt-contract",
+      "contract": "For equally relevant episodic memories, a recent event is ranked ahead of an older event.",
+      "as_of": "2026-01-31T12:00:00+00:00",
+      "turns": [
+        {
+          "turn": 1,
+          "user": "An older deployment blocker involved a migration approval.",
+          "memory_events": [
+            {
+              "op": "remember",
+              "key": "deployment_blocker",
+              "value": "migration approval",
+              "text": "An older deployment blocker involved a migration approval.",
+              "kind": "episodic",
+              "state": "current",
+              "occurred_at": "2025-12-01T12:00:00+00:00",
+              "importance": 0.8,
+              "source": "explicit"
+            }
+          ]
+        },
+        {
+          "turn": 2,
+          "user": "Today's deployment blocker is a failing health check.",
+          "memory_events": [
+            {
+              "op": "remember",
+              "key": "deployment_blocker",
+              "value": "failing health check",
+              "text": "Today's deployment blocker is a failing health check.",
+              "kind": "episodic",
+              "state": "current",
+              "occurred_at": "2026-01-30T12:00:00+00:00",
+              "importance": 0.8,
+              "source": "explicit"
+            }
+          ]
+        },
+        {
+          "turn": 3,
+          "user": "What is the current deployment blocker?",
+          "query": "deployment blocker",
+          "response_policy": "memory",
+          "checks": [
+            {
+              "type": "retrieved_count",
+              "count": 2
+            },
+            {
+              "type": "retrieved_first_is",
+              "text": "Today's deployment blocker is a failing health check."
+            },
+            {
+              "type": "retrieved_second_is",
+              "text": "An older deployment blocker involved a migration approval."
+            },
+            {
+              "type": "retrieved_score_greater",
+              "higher_text": "Today's deployment blocker is a failing health check.",
+              "lower_text": "An older deployment blocker involved a migration approval."
+            },
+            {
+              "type": "response_contains",
+              "text": "failing health check"
+            },
+            {
+              "type": "all_retrieved_active"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "long-horizon-persona-051",
+      "title": "Recall a persona after 51 turns",
+      "category": "long-horizon-persona",
+      "evaluation_layer": "prompt-contract",
+      "contract": "Explicit persona facts introduced early remain available after a long distractor-heavy conversation.",
+      "expected_turn_count": 51,
+      "turns": [
+        {
+          "turn": 1,
+          "user": "I go by Mira.",
+          "memory_events": [
+            {
+              "op": "remember",
+              "key": "preferred_name",
+              "value": "Mira",
+              "text": "User goes by Mira.",
+              "kind": "semantic",
+              "state": "current",
+              "source": "explicit"
+            }
+          ]
+        },
+        {
+          "turn": 2,
+          "user": "I work as a data engineer.",
+          "memory_events": [
+            {
+              "op": "remember",
+              "key": "occupation",
+              "value": "data engineer",
+              "text": "User works as a data engineer.",
+              "kind": "semantic",
+              "state": "current",
+              "source": "explicit"
+            }
+          ]
+        },
+        {
+          "turn": 3,
+          "user": "I currently live in Utrecht.",
+          "memory_events": [
+            {
+              "op": "remember",
+              "key": "home_location",
+              "value": "Utrecht",
+              "text": "User currently lives in Utrecht.",
+              "kind": "semantic",
+              "state": "current",
+              "source": "explicit"
+            }
+          ]
+        },
+        {
+          "turn": 4,
+          "user": "My cat is named Pixel.",
+          "memory_events": [
+            {
+              "op": "remember",
+              "key": "pet",
+              "value": "Pixel",
+              "text": "User has a cat named Pixel.",
+              "kind": "semantic",
+              "state": "current",
+              "source": "explicit"
+            }
+          ]
+        },
+        {
+          "turn": 5,
+          "user": "I eat vegetarian meals.",
+          "memory_events": [
+            {
+              "op": "remember",
+              "key": "diet",
+              "value": "vegetarian",
+              "text": "User eats vegetarian meals.",
+              "kind": "semantic",
+              "state": "current",
+              "source": "explicit"
+            }
+          ]
+        },
+        {
+          "turn": 6,
+          "user": "Python is my main programming language.",
+          "memory_events": [
+            {
+              "op": "remember",
+              "key": "programming_language",
+              "value": "Python",
+              "text": "User's main programming language is Python.",
+              "kind": "semantic",
+              "state": "current",
+              "source": "explicit"
+            }
+          ]
+        },
+        {
+          "turn": 7,
+          "user": "My timezone is Europe/Amsterdam.",
+          "memory_events": [
+            {
+              "op": "remember",
+              "key": "timezone",
+              "value": "Europe/Amsterdam",
+              "text": "User's timezone is Europe/Amsterdam.",
+              "kind": "semantic",
+              "state": "current",
+              "source": "explicit"
+            }
+          ]
+        },
+        {
+          "turn": 8,
+          "user": "I am building a climate dashboard.",
+          "memory_events": [
+            {
+              "op": "remember",
+              "key": "active_project",
+              "value": "climate dashboard",
+              "text": "User is building a climate dashboard.",
+              "kind": "semantic",
+              "state": "current",
+              "source": "explicit"
+            }
+          ]
+        },
+        {
+          "turn": 9,
+          "user": "I run on Saturday mornings.",
+          "memory_events": [
+            {
+              "op": "remember",
+              "key": "routine",
+              "value": "running on Saturday mornings",
+              "text": "User runs on Saturday mornings.",
+              "kind": "semantic",
+              "state": "current",
+              "source": "explicit"
+            }
+          ]
+        },
+        {
+          "turn": 10,
+          "user": "Please keep replies concise and use bullet points.",
+          "memory_events": [
+            {
+              "op": "remember",
+              "key": "response_style",
+              "value": "concise bullet points",
+              "text": "User prefers concise replies with bullet points.",
+              "kind": "semantic",
+              "state": "current",
+              "source": "explicit"
+            }
+          ]
+        },
+        {
+          "turn": 11,
+          "user": "I am comparing two keyboard layouts today.",
+          "memory_events": []
+        },
+        {
+          "turn": 12,
+          "user": "Can you help me draft a grocery list?",
+          "memory_events": []
+        },
+        {
+          "turn": 13,
+          "user": "I read an article about urban gardens.",
+          "memory_events": []
+        },
+        {
+          "turn": 14,
+          "user": "What are some ways to debug a slow query?",
+          "memory_events": []
+        },
+        {
+          "turn": 15,
+          "user": "I am taking a short walk.",
+          "memory_events": []
+        },
+        {
+          "turn": 16,
+          "user": "Could you explain database indexes?",
+          "memory_events": []
+        },
+        {
+          "turn": 17,
+          "user": "I am deciding between two notebook covers.",
+          "memory_events": []
+        },
+        {
+          "turn": 18,
+          "user": "Please remind me to stretch later.",
+          "memory_events": []
+        },
+        {
+          "turn": 19,
+          "user": "I found an interesting train route.",
+          "memory_events": []
+        },
+        {
+          "turn": 20,
+          "user": "I plan to visit Kyoto in October.",
+          "memory_events": [
+            {
+              "op": "remember",
+              "key": "travel_plan",
+              "value": "visit Kyoto in October",
+              "text": "User plans to visit Kyoto in October.",
+              "kind": "episodic",
+              "state": "planned",
+              "occurred_at": "2026-01-20T12:00:00+00:00",
+              "importance": 0.6,
+              "source": "explicit"
+            }
+          ]
+        },
+        {
+          "turn": 21,
+          "user": "How do I compare JSON files?",
+          "memory_events": []
+        },
+        {
+          "turn": 22,
+          "user": "I am making tea.",
+          "memory_events": []
+        },
+        {
+          "turn": 23,
+          "user": "Can you suggest a quiet focus playlist?",
+          "memory_events": []
+        },
+        {
+          "turn": 24,
+          "user": "I just cleaned my desk.",
+          "memory_events": []
+        },
+        {
+          "turn": 25,
+          "user": "What is a simple way to test a parser?",
+          "memory_events": []
+        },
+        {
+          "turn": 26,
+          "user": "I am sketching a small dashboard layout.",
+          "memory_events": []
+        },
+        {
+          "turn": 27,
+          "user": "Tell me about UTC offsets.",
+          "memory_events": []
+        },
+        {
+          "turn": 28,
+          "user": "I am planning tomorrow's errands.",
+          "memory_events": []
+        },
+        {
+          "turn": 29,
+          "user": "Can you summarize this paragraph?",
+          "memory_events": []
+        },
+        {
+          "turn": 30,
+          "user": "The current task is reviewing a data import.",
+          "memory_events": []
+        },
+        {
+          "turn": 31,
+          "user": "I am looking for a durable backpack.",
+          "memory_events": []
+        },
+        {
+          "turn": 32,
+          "user": "What makes a good CLI?",
+          "memory_events": []
+        },
+        {
+          "turn": 33,
+          "user": "I am checking a CSV export.",
+          "memory_events": []
+        },
+        {
+          "turn": 34,
+          "user": "Could you give me a short checklist?",
+          "memory_events": []
+        },
+        {
+          "turn": 35,
+          "user": "I am taking a break from the screen.",
+          "memory_events": []
+        },
+        {
+          "turn": 36,
+          "user": "How should I name a configuration file?",
+          "memory_events": []
+        },
+        {
+          "turn": 37,
+          "user": "I found a typo in a report.",
+          "memory_events": []
+        },
+        {
+          "turn": 38,
+          "user": "Can you explain retry backoff?",
+          "memory_events": []
+        },
+        {
+          "turn": 39,
+          "user": "I am organizing project notes.",
+          "memory_events": []
+        },
+        {
+          "turn": 40,
+          "user": "Today I fixed the dashboard's data import bug.",
+          "memory_events": [
+            {
+              "op": "remember",
+              "key": "data_import_fix",
+              "value": "fixed data import bug",
+              "text": "Today the user fixed the dashboard's data import bug.",
+              "kind": "episodic",
+              "state": "current",
+              "occurred_at": "2026-01-30T12:00:00+00:00",
+              "importance": 0.7,
+              "source": "explicit"
+            }
+          ]
+        },
+        {
+          "turn": 41,
+          "user": "Could you turn these notes into bullets?",
+          "memory_events": []
+        },
+        {
+          "turn": 42,
+          "user": "I am reviewing a pull request.",
+          "memory_events": []
+        },
+        {
+          "turn": 43,
+          "user": "What is a safe default for a timeout?",
+          "memory_events": []
+        },
+        {
+          "turn": 44,
+          "user": "I am going to make lunch.",
+          "memory_events": []
+        },
+        {
+          "turn": 45,
+          "user": "Can you explain a database transaction?",
+          "memory_events": []
+        },
+        {
+          "turn": 46,
+          "user": "I am checking tomorrow's calendar.",
+          "memory_events": []
+        },
+        {
+          "turn": 47,
+          "user": "Please help me phrase a status update.",
+          "memory_events": []
+        },
+        {
+          "turn": 48,
+          "user": "I am testing a command locally.",
+          "memory_events": []
+        },
+        {
+          "turn": 49,
+          "user": "What should I include in a bug report?",
+          "memory_events": []
+        },
+        {
+          "turn": 50,
+          "user": "I am wrapping up this work session.",
+          "memory_events": []
+        },
+        {
+          "turn": 51,
+          "user": "What do you remember about my profile?",
+          "query": "my profile",
+          "retrieval_scope": "all_active_semantic",
+          "response_policy": "memory",
+          "checks": [
+            {
+              "type": "retrieved_count",
+              "count": 10
+            },
+            {
+              "type": "retrieved_has_keys",
+              "keys": [
+                "preferred_name",
+                "occupation",
+                "home_location",
+                "pet",
+                "diet",
+                "programming_language",
+                "timezone",
+                "active_project",
+                "routine",
+                "response_style"
+              ]
+            },
+            {
+              "type": "response_contains",
+              "text": "Mira"
+            },
+            {
+              "type": "response_contains",
+              "text": "data engineer"
+            },
+            {
+              "type": "response_contains",
+              "text": "Utrecht"
+            },
+            {
+              "type": "response_contains",
+              "text": "Pixel"
+            },
+            {
+              "type": "response_contains",
+              "text": "vegetarian"
+            },
+            {
+              "type": "response_contains",
+              "text": "Python"
+            },
+            {
+              "type": "response_contains",
+              "text": "Europe/Amsterdam"
+            },
+            {
+              "type": "response_contains",
+              "text": "climate dashboard"
+            },
+            {
+              "type": "response_contains",
+              "text": "Saturday mornings"
+            },
+            {
+              "type": "response_contains",
+              "text": "concise replies with bullet points"
+            },
+            {
+              "type": "response_excludes",
+              "text": "favorite color is blue"
+            },
+            {
+              "type": "all_retrieved_active"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

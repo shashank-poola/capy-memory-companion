@@ -8,6 +8,8 @@ from capy.memory.add.add_updation_phase import update_phase
 
 from capy.memory.embeddings import embed_text
 from capy.db.models.memory import Memory
+from capy.db.models.conversation_summary import ConversationSummary
+from capy.db.models.message import Message
 from capy.memory.bubble_creator import create_bubbles
 from capy.memory.vector_store import get_vector_store, rebuild_index_from_db, save_vector_store
 
@@ -22,7 +24,32 @@ class CapyMemory:
         """
         self.db = db
 
+    def get_conversation_context(
+        self,
+        conversation_id: int,
+        message_limit: int = 10,
+    ) -> Dict:
+        """Return a bounded summary and recent messages for chat context."""
+        summary_row = (
+            self.db.query(ConversationSummary)
+            .filter(ConversationSummary.conversation_id == conversation_id)
+            .one_or_none()
+        )
+        recent_messages = (
+            self.db.query(Message)
+            .filter(Message.conversation_id == conversation_id)
+            .order_by(Message.created_at.desc(), Message.id.desc())
+            .limit(max(0, message_limit))
+            .all()
+        )
 
+        return {
+            "summary": summary_row.summary_text if summary_row else "",
+            "messages": [
+                {"role": message.role, "content": message.content}
+                for message in reversed(recent_messages)
+            ],
+        }
 
     # add()
     def add(self, messages: List[dict], conversation_id: int):
@@ -101,7 +128,7 @@ class CapyMemory:
         if indexed_memory_ids != active_memory_ids:
             vector_store = rebuild_index_from_db(self.db, conversation_id)
 
-        # FAISS search (O(log n))
+        # FAISS exact inner-product search over the conversation index.
         faiss_results = vector_store.search(query_embedding, k=limit * 2)
 
         if not faiss_results:

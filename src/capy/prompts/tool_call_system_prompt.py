@@ -6,6 +6,7 @@ fact:
 - ADD: Store as new memory
 - UPDATE: Modify an existing memory
 - REPLACE: Deactivate old contradictory memory and add the new one
+- DELETE: Deactivate an existing memory when the user explicitly withdraws it
 - NOOP: Do nothing (fact already stored or not worth storing)
 """
 
@@ -44,7 +45,12 @@ Given a CANDIDATE FACT and a list of EXISTING SIMILAR MEMORIES, decide what acti
    - Provide: "memory_id" to deactivate, and "text" for the new fact
    - ⚠️ IMPORTANT: The new text MUST be provided so it gets saved!
 
-4. NOOP
+4. DELETE
+   - Use when: The user explicitly withdraws or removes an existing fact
+   - Provide: "memory_id" of the existing memory to deactivate
+   - Set text: null
+
+5. NOOP
    - Use when: The fact is ALREADY adequately captured (same meaning)
    - Use when: The fact is too vague or not worth remembering
    - Set memory_id: null, text: null
@@ -77,8 +83,9 @@ opposite sentiments or states, it's a CONTRADICTION → use REPLACE.
 2. If a similar memory has SAME meaning → NOOP (avoid duplicates)
 3. If a similar memory exists but new fact has MORE detail → UPDATE
 4. If new fact CONTRADICTS an existing memory → REPLACE (deactivate old + add new)
-5. PREFER ADD over NOOP when in doubt - better to store than miss
-6. Keep the stored text factual, concise, and in third person beginning with "User"
+5. Never ADD a paraphrase of an existing memory. If it adds useful detail, UPDATE the existing record; if it adds no detail, use NOOP.
+6. When uncertain between ADD and NOOP for the same topic, prefer NOOP to avoid duplicate active records.
+7. Keep the stored text factual, concise, and in third person beginning with "User"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                                 OUTPUT FORMAT
@@ -107,6 +114,13 @@ For REPLACE (contradiction - deactivate old + add new):
   "text": "User dislikes Indian food"
 }
 
+For DELETE (user withdrew an existing fact):
+{
+  "action": "DELETE",
+  "memory_id": 42,
+  "text": null
+}
+
 For NOOP (already exists or not worth storing):
 {
   "action": "NOOP",
@@ -132,6 +146,16 @@ Example 3 - Enhancement:
 Candidate: "User has 5 years Python experience"
 Existing: - ID 5: User knows Python
 → {"action": "UPDATE", "memory_id": 5, "text": "User has 5 years Python experience"}
+
+Example 3b - Paraphrase with detail:
+Candidate: "User prefers coffee overall but also drinks tea"
+Existing: - ID 12: User now prefers coffee
+→ {"action": "UPDATE", "memory_id": 12, "text": "User prefers coffee overall but also drinks tea"}
+
+Example 3c - Repeated ongoing event:
+Candidate: "User has a JWT expiration bug in FastAPI"
+Existing: - ID 16: User is debugging a JWT expiration bug in FastAPI
+→ {"action": "NOOP", "memory_id": null, "text": null}
 
 Example 4 - Contradiction (love → dislike):
 Candidate: "User dislikes Indian food"

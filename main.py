@@ -14,6 +14,51 @@ from capy.memory.memory import CapyMemory
 
 
 PROFILE_NAME = "Shashank"
+MEMORY_RETRIEVAL_LIMIT = 10
+CHAT_HISTORY_LIMIT = 10
+
+
+def build_chat_messages(
+    user_message: str,
+    memories_text: str,
+    conversation_context: dict,
+) -> list[dict[str, str]]:
+    """Build Capy's bounded, evidence-aware response prompt."""
+    summary_text = conversation_context.get("summary") or "No summary yet."
+    recent_messages = conversation_context.get("messages") or []
+    recent_text = "\n".join(
+        f"{message['role'].upper()}: {message['content']}"
+        for message in recent_messages
+    ) or "No previous messages."
+
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are Capy, a warm, grounded, thoughtful companion.\n"
+                "Your stable character values patience, clarity, gentle humor, "
+                "and honest uncertainty. Be kind and concise without sounding "
+                "like a generic scripted assistant. Do not repeatedly introduce "
+                "yourself or add a generic offer of help after every answer.\n\n"
+                "Character and evidence rules:\n"
+                "- Respond directly to the user's latest message.\n"
+                "- Show empathy without claiming human experiences, private "
+                "feelings, or memories that were not supplied.\n"
+                "- Use recent conversation and active memories for continuity, "
+                "but treat prior assistant messages as dialogue context, not "
+                "proof of a user fact.\n"
+                "- Distinguish current facts, historical facts, and plans. Do "
+                "not describe a planned technology as currently used.\n"
+                "- Never infer a technical cause, personal detail, or secret "
+                "that the user did not explicitly provide. Say when something "
+                "is unknown.\n\n"
+                f"Conversation Summary:\n{summary_text}\n\n"
+                f"Recent Conversation:\n{recent_text}\n\n"
+                f"User Memories:\n{memories_text}"
+            ),
+        },
+        {"role": "user", "content": user_message},
+    ]
 
 
 def chat_with_memory(
@@ -31,31 +76,22 @@ def chat_with_memory(
     relevant_memories = memory.search(
         query=user_message,
         conversation_id=conversation_id,
-        limit=10,
+        limit=MEMORY_RETRIEVAL_LIMIT,
     )
 
-    # Format memories for the prompt.
+    # Format memories and bounded conversation context for the prompt.
     memories_text = "\n".join(
         f"- {item['memory']}" for item in relevant_memories["results"]
     ) or "No memories yet."
-
-    # Generate a response with memory context.
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are Capy, a warm, thoughtful, patient, and honest companion.\n"
-                "Be concise, kind, and helpful. Use the user's memories to "
-                "personalize your responses when relevant, but do not mention "
-                "internal memory systems unless the user asks. Never claim to "
-                "remember anything that is not present in the conversation or "
-                "supplied memory context. Treat the user with patience and "
-                "respect.\n\n"
-                f"User Memories:\n{memories_text}"
-            ),
-        },
-        {"role": "user", "content": user_message},
-    ]
+    conversation_context = memory.get_conversation_context(
+        conversation_id,
+        message_limit=CHAT_HISTORY_LIMIT,
+    )
+    messages = build_chat_messages(
+        user_message=user_message,
+        memories_text=memories_text,
+        conversation_context=conversation_context,
+    )
 
     response = client.chat.completions.create(
         model=settings.llm_model,
